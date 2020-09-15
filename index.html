@@ -1,0 +1,505 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>diffDOM</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.9.0/dist/katex.min.css">
+  <link rel="stylesheet" href="index.css">
+
+  <script src="diffDOM/diffDOM.js"></script>
+  <script src="mathjax-parser/dist/mathjax-parser.js"></script>
+
+  <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+  <script src="scrollTo/jquery.scrollTo.min.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.9.0/dist/katex.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.9.0/contrib/auto-render.min.js"></script>
+
+
+<!--
+  <script type="text/x-mathjax-config">
+    MathJax.Hub.Config({
+      extensions: ["tex2jax.js"],
+      jax: ["input/TeX", "output/HTML-CSS"],
+      displayAlign: "left",
+      displayIndent: "1em",
+      CommonHTML: {
+        scale: 130
+      },
+      tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        displayMath: [ ['$$','$$'], ["\\[","\\]"] ],
+        processEscapes: true
+      },
+      "HTML-CSS": { fonts: ["TeX"] }
+    });
+  </script>
+  <script type="text/javascript" async
+    src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=TeX-MML-AM_CHTML">
+  </script>
+-->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.3.3/ace.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.3.3/ext-language_tools.js"></script>
+
+</head>
+<body>
+<span id="help">Help</span>
+<div id="info">
+  <ul>
+    <li>Edits are continuously saved to browser storage.</li>
+    <li>Save button saves to file system.</li>
+    <li>https://khan.github.io/KaTeX/function-support.html</li>
+    <li>Double click on rendered equation to copy LaTeX code into editor</li>
+    <li>Short-cuts</li>
+    <ul> 
+      <li>frac TAB: <code>\frac{}{}</code></li>
+      <li>align TAB: <code>\begin{aligned} a &amp; = b + c \\ d + e &amp; =f
+    \end{aligned}</code>
+      <li>big( TAB: <code>\big[\big]</code>. Also, bigg(, Big(, Bigg(</li>
+      <li>big[ TAB: <code>\big[\big]</code>. Also, bigg[, Big[, Bigg[</li>
+      <li>iint TAB: <code>\int_{\infty}^\infty</code></li>
+    </ul>
+  </ul>
+</div>
+<div id="cont">
+  <div id="left">
+<!-- Start initial editor content. -->
+      <div id="editor">
+<h1>Cylindrical</h1>
+
+$$\nabla f = {\partial f \over \partial \rho}\hat{\boldsymbol \rho}+ {1 \over \rho}{\partial f \over \partial \phi}\hat{\boldsymbol \phi}+ {\partial f \over \partial z}\hat{\mathbf z}$$
+
+\(a=1\)
+     </div>
+<!-- End initial editor content. -->
+  </div>
+  <div id="drag"></div>
+  <div id="right">
+      <!-- ids must be same -->
+      <div id="diffDOM"></div>
+      <div style="display:none">
+        <hr/>
+        Current State
+        <div id="diffDOM"></div>
+        <div style="display:none">
+          Last State
+          <div id="diffDOM"></div>
+        </div>
+        <hr/>
+        Last State
+        <div id="diffDOM"></div>
+      </div>
+  </div>
+</div>
+</body>
+
+<!-- DOM setup -->
+<script>
+  $(document).ready(function(){
+
+    $( "#help" ).click(
+      function() {
+        $("#info").show();
+      });
+    $( "#info" ).hover(
+      function() {}, function() {$(this).hide();}
+    );
+
+    // Double clicking rendered equation puts LaTeX equation in editor at
+    // cursor position.
+    $(document).on('dblclick','.katex', function() {
+
+        // Annotation element holds unrendered equation.      
+        value = $(this).find('annotation').text();
+        cursorPosition = editor.getCursorPosition();
+        line = editor.session.getLine(cursorPosition.row);
+
+        if ($(this).parents('.katex-display').length) {
+          // Equation is block equation. Wrap with $$ $$.
+          value = "$$" + value + "$$";
+          // If cursor on line with no content, 
+          // move cursor to start of line.
+          if (line.match(/^\s+$/)) {
+            cursorPosition.column = 0;
+          }
+          // Insert newlines if cursor was not at start of line.
+          if (cursorPosition.column != 0) {
+            value = "\n\n" + value;
+          }
+        } else {
+          // Equation is inline. Wrap with \( \)
+          value = "\\(" + value + "\\)";
+          // If no whitespace before or after cursor, insert whitespace.
+          if (line[cursorPosition.column-1] !== " ") {
+            value = " " + value;
+          }
+          if (line[cursorPosition.column+1] !== " ") {
+            value = value + " ";
+          }
+        }
+
+        editor.session.insert(cursorPosition,value);
+    }) 
+
+    // Set editor height be smaller than page height so resize
+    // triangle in lower right is visible.
+    $(window).resize(function() {
+      // Is https://davidwalsh.name/javascript-debounce-function
+      // needed?
+      $("#editor").outerHeight($("#cont").innerHeight()-16);
+      editor.resize(); // Trigger reflowing of editor content
+    }).trigger("resize");
+
+    // Resize horizontally based on movement of center #drag element.
+    $('#drag').on('mousedown', function(e) {
+      var $dragable = $(this);
+      var startWidth = $dragable.css('margin-left');
+      var pX = e.pageX;
+      // Show cursor as col-resize when cursor anywhere in body
+      // (fast movement will move cursor off element; this 
+      // ensures cursor does not change while moving)
+      $("body").css("cursor", "col-resize"); 
+      $(document).on('mouseup', function(e){
+          $(document).off('mouseup').off('mousemove');
+          $("body").css("cursor", "default");
+          editor.resize();
+      });
+      $(document).on('mousemove', function(me) {
+          var off = $('#left').offset();
+          var w = $("#left").outerWidth() - $("#left").innerWidth();
+          var mx = me.pageX - off.left - w - $('#drag').width();
+          $('#left').css({"width": mx});
+      });            
+    });
+});
+</script>
+
+<!-- Ace editor setup -->
+<script>
+
+  // Set up ace editor
+  var code = document.getElementById('editor').innerHTML;
+  var langTools = ace.require("ace/ext/language_tools");
+  var editor = ace.edit("editor");
+  editor.getSession().setMode('ace/mode/html');
+  //editor.getSession().setMode('ace/mode/example');
+  //editor.getSession().setMode('ace/mode/tex');
+  editor.setOptions({
+    wrap: true, 
+    indentedSoftWrap: false, 
+    behavioursEnabled: true,
+    enableSnippets: true,
+    enableBasicAutocompletion: true,
+  })
+
+  // Read last state from browser storage
+  //var editorContent = localStorage.getItem('editorContent');
+
+  if (typeof(editorContent) !== "undefined") {
+    editor.setValue(editorContent);
+  } else {
+    // Update the editor with boilerplate code.
+    // Remove leading and trailing newlines.
+    editor.setValue(code.replace(/^\n/,"").replace(/\n\s.*$/,""));
+  }
+
+  editor.clearSelection();
+  editor.focus();
+
+  // Remove DOCTYPE error message
+  editor.renderer.on('afterRender', function() {
+    $($('.ace_gutter-cell')[0]).removeClass('ace_info');
+    $($('.ace_tooltip')[0]).remove();
+  });
+
+
+  // Hint on adding highlight keywords
+  //http://jsbin.com/ojijeb/445/edit?html,output
+
+  // https://cloud9-sdk.readme.io/docs/snippets
+  // https://stackoverflow.com/questions/26089258/ace-editor-manually-adding-snippets
+  if (0) {
+    var snippetManager = ace.require("ace/snippets").snippetManager;
+    var snippets = snippetManager.parseSnippetFile('ace/snippets/html');
+    snippets.push({
+      content: "\\frac{${1}}{${2}}hello",
+      name: "\\frac{${1}}{${2}}",
+      tabTrigger: "frac"
+    });
+    snippetManager.register(snippets, "html");
+  }
+
+  if (0) {
+    var customCompleter = 
+    {
+      getCompletions: 
+        function(editor, session, pos, prefix, callback) {
+          callback(null, 
+           [
+            {name: "mathbf", value:'mathbf', meta: "math"},
+            {name: 'boldsymbol', value: 'boldsymbol', meta: "math"},
+            {name: 'hat', value: 'hat', meta: "math"},              
+            {name: 'hat{\\mathbf{', value: 'hat{\\mathbf{', meta: "math"},
+            {name: 'hat{\\boldsymbol{', value: 'hat{\\boldsymbol{', meta: "math"},                
+            ]);
+        }
+     }
+    langTools.addCompleter(customCompleter);
+  }
+
+  // Hack to autoclose certain sequences.
+  // TODO: There is a way to do this using native Ace function calls.
+  // Research how to do this by looking at code for languages. Will
+  // need to create new mode.
+  if (0) {
+    // TODO: Make this use-editable and validate it.
+    // Typing first element in each array of autos will cause
+    // second element to be entered and the cursor will move
+    // back to original position.
+    var autos = 
+        [ 
+          ["$$","$$"],
+          ["\\(","\\)"],
+          ["\\[","\\]"],
+          ["\\left(","\\right)"],
+          ["\\big(","\\big)"],
+          ["\\Big(","\\Big)"],
+          ["\\bigg(","\\bigg)"],
+          ["\\Bigg(","\\Bigg)"],
+          ["\\big[","\\big]"],
+          ["\\Big[","\\Big]"],
+          ["\\bigg[","\\bigg]"],
+          ["\\Bigg[","\\Bigg]"]
+        ];
+
+    // Find max length of autoclose sequence.
+    var maxlen = 0;
+    var autosopen = [];
+    for (var i = 0;i < autos.length-1;i++) {
+      maxlen = (maxlen > autos[i][0].length) ? maxlen : autos[i][0].length;
+      autosopen[i] = autos[i][0];
+    }
+
+    editor.commands.on("afterExec", function(e) {
+
+      // Autoclose hack
+      // Based on https://stackoverflow.com/questions/43435839/ace-editor-automatic-code-block-completion
+
+      // TODO: Figure out how to do this in the same way that html
+      // tags are autoclosed.
+
+      if (e.command.name !== "insertstring") {return;};
+
+      if (typeof(editor.last) === "undefined") {
+        editor.last = "";
+      }
+      // Append current character to previously entered characters
+      var last = editor.last + e.args;
+      last = last.replace(/\n/,"");
+
+      // Accumulate until max autocomplete string length reached
+      if (last.length == maxlen) {
+      } else {
+        editor.last = last;
+      }
+      var append = "";
+
+      var lastr = "";
+      //console.log(last);
+      for (var i = 0;i < autosopen.length-1;i++) {
+        lastr = last.slice(-autos[i][0].length);
+        //console.log(lastr + "  " + autosopen[i]);
+        if (lastr === autos[i][0]) {
+          append = autos[i][1];
+          editor.last = "";
+          console.log("Resetting");
+          break;
+        }
+      }
+
+      // Length of inserted string less omitted slash.
+      var back = append.replace(/^\//,"").length;
+
+      // Special case:
+      // If two consecutive $ characters, insert two more and
+      // move cursor back to position. If content after inserted $$,
+      // append $$ to end of line.
+      cursorPosition = editor.getCursorPosition();
+      var line = editor.session.getLine(cursorPosition.row);
+      //console.log(cursorPosition)
+      //console.log(line[cursorPosition.column+1])
+      //if (line[column+1])
+      if (lastr === '$$') {
+          var append = '$$';
+          if (line[0].match(/\$/) && line[cursorPosition.column+1]) {
+            // If line starts with $$ but has content that follows,
+            // insert $$ at end of line
+            //cursorPosition.column = line.length;  
+          }
+          if (!line[0].match(/^\$/)) {
+            // Grab content from start $$ to end of line
+            // and insert two lines after.
+            //var xappend = line.slice(cursorPosition.column-2,line.length);
+            //console.log(xappend)
+          }
+      }
+
+      if (append === "") {return;};
+
+      editor.session.insert(cursorPosition,append);
+      editor.moveCursorTo(cursorPosition.row,cursorPosition.column);
+
+    });
+  }
+</script>
+
+<!-- Use DiffDOM to only update elements that have changed.-->
+<script>
+
+  // Procedure:
+  // On change in editor, read it and wrap equations in a span element. Then do a diff on last post-wrap state. If an equation has changed, only the equation will be modified. In addition, if any text is changed, only text in its parent node will change and equations in that node will not be modified because they are wrapped in span elements.
+  var parser = new MathjaxParser();
+   
+  // Want to wrap equations in an element so that the diffs only apply to equations and not the entire text node the equation is in. But cannot use replacement such as <span>$$ in MathjaxParse configuration because it converts to &lt;span\gt;$ See line 48 of ../dist/mathjax-parser.js for hints on work-around. Here I replace math with special characters that will be replaced when entire editor content is converted to a string.
+  var config = {
+            displayMath: [['$$','$$'],['\\[','\\]']],
+            displayMathReplacement: ['_Display','Display_'],
+            inlineMath: [['$','$'],['\\(','\\)']],
+            inlineMathReplacement: ['_Inline', 'Inline_']
+          }
+ 
+  var dd = new diffDOM();
+
+  var inText      = document.getElementById('inText');
+  var outElement  = document.querySelectorAll('#diffDOM')[0];  
+  var outHTML     = document.querySelectorAll('#diffDOM')[1];
+  var xoutHTML    = document.querySelectorAll('#diffDOM')[2];
+  var xoutHTML2   = document.querySelectorAll('#diffDOM')[3];
+
+  // outHTML holds new state of inText after HTML rendering
+  // xoutHTML holds last state of outHTML until outElement is updated
+  // xoutHTML2 holds last state of outHTML until next keypress
+  // outElement is outHTML with rendered equations
+
+  // Make initial content same as initial inText.
+  outElement.innerHTML = editor.getValue();
+  outHTML.innerHTML    = editor.getValue();
+
+  // Find equation characters and replace with span and found character.
+  var tmp  = parser
+              .parse(outHTML.innerHTML, config)
+              .outputHtml
+              .replace(/_Display/g,"<span>$$$")
+              .replace(/Display_/g,"$$$</span>")
+              .replace(/_Inline/g,"<span>\\(")
+              .replace(/Inline_/g,"\\)</span>");
+
+  // Initalize all elements.
+  outElement.innerHTML = tmp;
+  outHTML.innerHTML    = tmp;
+  xoutHTML.innerHTML   = tmp;
+  xoutHTML2.innerHTML  = tmp;
+
+  function katexerror(e) {
+    //console.log(e);
+  }
+  
+  // Render everything on first load
+  renderMathInElement(outElement,{errorCallback:katexerror});
+
+  editor.on('change', function(e){
+
+    // Save every 10th change
+    if (typeof(editor._changesSinceSave) === "undefined") {
+      editor._changesSinceSave = 0;
+    }
+    if (editor._changesSinceSave > 9) {
+      localStorage.setItem('editorContent',editor.getValue());
+      editor._changesSinceSave = 0;
+      console.log("Saving.");
+    } else {
+      editor._changesSinceSave = editor._changesSinceSave + 1;
+    }
+
+    outHTML.innerHTML = editor.getValue();
+
+    if (outHTML.innerHTML != editor.getValue()) {
+      // The innerHTML had to be adjusted to take in the text area value. This means the HTML was invalid. This gives false error when, e.g., <polygon ... />is used. It is valid, but browser replaces it with <polygon ...></polygon>
+      ////console.log("New HTML invalid. Not updating.");
+      //console.log("New HTML possibly invalid.")
+      //return false;
+    } else {
+      //console.log("New HTML valid. Updating.")
+    }
+
+    //console.log("Current state before replacement.");
+    //console.log(outHTML.innerHTML)
+    outHTML.innerHTML = parser
+                        .parse(outHTML.innerHTML, config)
+                        .outputHtml
+                        .replace(/_Display/g,"<span>$$$")
+                        .replace(/Display_/g,"$$$</span>")
+                        .replace(/_Inline/g,"<span>\\(")
+                        .replace(/Inline_/g,"\\)</span>");
+
+    // Get diff between outHTML with previous state
+    //console.log("Current State")
+    //console.log(outHTML)
+    //console.log(outHTML.innerHTML);
+    //console.log("Last State")
+    //console.log(xoutHTML);
+    //console.log(xoutHTML.innerHTML);
+    xoutHTML2.innerHTML = xoutHTML.innerHTML;
+    var d = dd.diff(xoutHTML, outHTML);
+    //console.log("Diff:")
+    console.log(d);
+    if (d.length > 3) {
+      localStorage.setItem('editorContent',editor.getValue());
+      editor._changesSinceSave = 0;
+      console.log("Saving.");
+    }
+    //console.log("Patching last state and outElement.");
+    // Patch last state (xoutHTML)
+    dd.apply(xoutHTML, d);
+    // Patch outElement
+    dd.apply(outElement, d);
+
+    if (d && d.length && d[0].route) {
+      // Differences in a node found, look for math to be rendered.
+      // TODO: Need to loop through d, not just modify first one?
+      
+      // Note that until equation is finished, this will
+      // render all equations. To prevent this close equation
+      // before making edits.
+
+      // Get parent node of modified node
+      proute = d[0].route.slice();
+      c = proute.splice(proute.length - 1, 1)[0];
+      xpnode = dd.getFromRoute(outHTML, proute);
+
+        // Get parent node of modified node in outElement      
+      pnode = dd.getFromRoute(outElement, proute);
+      $('#right').scrollTo(pnode);
+
+      //console.log("Equation in modified node:")
+      //console.log(parser.parse(xpnode.innerHTML, config).outputHtml);
+
+      if ((xpnode).textContent.match(/\$\$|\\\)/)) {
+        // Found equation in modified node
+
+        pnode.innerHTML = xpnode.innerHTML;
+        //console.log("Rendering:");
+        //console.log(pnode.innerHTML);
+        renderMathInElement(pnode,{errorCallback: katexerror});
+        //var math = document.getElementById("MathExample");
+        //console.log(pnode)
+        //MathJax.Hub.Queue(["Typeset",MathJax.Hub,pnode]);
+      }
+    }
+
+  }, false);
+</script>
+
+</html>
