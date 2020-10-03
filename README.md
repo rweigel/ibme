@@ -18,6 +18,8 @@ Inspired by StackEdit https://stackedit.io/
 
 # Misc Links
 
+https://github.com/kisonecat/tikzjax
+
 https://www.jqueryscript.net/text/Simple-WYSIWYG-Math-Editor-With-jQuery-Mathquill-matheditor-js.html
 
 http://math.chapman.edu/~jipsen/matheditor/
